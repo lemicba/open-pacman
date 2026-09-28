@@ -27,6 +27,7 @@ function createGame() {
     state: 'start',
     score: 0,
     lives: 3,
+    frames: 0, // frames desde el arranque/escalonado (60 ≈ 1 s)
     dotsRemaining: dots,
     grid,
     pacman: {
@@ -42,6 +43,7 @@ function createGame() {
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      released: false,
     } ) ),
   };
 }
@@ -176,6 +178,7 @@ function collides( a, b ) {
 }
 
 function update( game ) {
+  game.frames++;
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
