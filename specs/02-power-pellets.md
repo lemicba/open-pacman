@@ -1,6 +1,6 @@
 # SPEC 02 — Power pellets y modo asustado
 
-> **Estado:** Approved
+> **Estado:** Implemented
 > **Depende de:** SPEC 01
 > **Fecha:** 2026-09-28
 > **Objetivo:** 4 power pellets (2 arriba, 2 abajo) que asustan a los fantasmas liberados durante 8 segundos (azules, cara dolida, huyen de Pac-Man, comestibles con cadena 200/400/800/1600) y los comidos vuelven a la pocilga como ojos para salir escalonados tras el poder.

@@ -401,6 +401,10 @@ function resetPositions( game ) {
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up'; // direccion inicial del rebote en la pocilga
     g.released = false;
+    g.mode = 'normal'; // tambien los ojos (eaten) y asustados (frightened)
+    g.speed = GHOST_SPEED;
+    g.route = null;
+    g.routeIndex = 0;
     g.exitAt = GHOST_STARTS[ i ].releaseAt * 60; // re-escalonado 0/3/6/9 s
   } );
 }
@@ -443,8 +447,15 @@ function update( game ) {
       game.state = 'lost';
       return;
     }
-    resetPositions( game );
-    break;
+  // Muerte durante el poder: se cancela el estado del poder y corre el
+  // re-escalonado de SPEC 01 (resetPositions restaura modo y velocidades).
+  if ( game.power.active ) {
+    game.power.active = false;
+    game.power.framesLeft = 0;
+    game.power.chainIndex = 0;
+  }
+  resetPositions( game );
+  break;
   }
 
   if ( game.dotsRemaining <= 0 ) game.state = 'won';
