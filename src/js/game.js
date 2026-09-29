@@ -21,7 +21,8 @@ function createGame() {
   grid[ PACMAN_START.y ][ PACMAN_START.x ] = 0;
 
   let dots = 0;
-  for ( const row of grid ) for ( const v of row ) if ( v === 2 ) dots++;
+  for ( const row of grid )
+    for ( const v of row ) if ( v === 2 || v === 4 ) dots++;
 
   return {
     state: 'start',
@@ -29,6 +30,12 @@ function createGame() {
     lives: 3,
     frames: 0, // frames desde el arranque/escalonado (60 ≈ 1 s)
     dotsRemaining: dots,
+    power: {
+      active: false,
+      framesLeft: 0, // 480 = 8 s * 60
+      chainIndex: 0, // 0→200, 1→400, 2→800, 3→1600
+      endAtFrames: 0, // frame absoluto de expiracion (para el stagger de salida)
+    },
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -45,6 +52,8 @@ function createGame() {
       kind: g.kind,
       releaseAt: g.releaseAt,
       released: false,
+      mode: 'normal', // 'normal' | 'frightened' | 'eaten' (ojos volviendo a la pocilga)
+      exitAt: 0, // frame absoluto a partir del cual puede salir de la pocilga
     } ) ),
   };
 }
@@ -83,6 +92,18 @@ function wrapTunnel( a, width ) {
   }
 }
 
+// Activa el modo asustado: 8 s, cadena 200..1600. Re-asusta solo a los
+// fantasmas liberados en el mapa; la pocilga y los ojos no se asustan.
+function activatePower( game ) {
+  game.power.active = true;
+  game.power.framesLeft = 480; // 8 s * 60
+  game.power.chainIndex = 0;
+  game.power.endAtFrames = game.frames + game.power.framesLeft;
+  game.ghosts.forEach( ( g ) => {
+    if ( g.released && g.mode === 'normal' ) g.mode = 'frightened';
+  } );
+}
+
 function movePacman( game ) {
   const p = game.pacman;
   const grid = game.grid;
@@ -102,6 +123,13 @@ function movePacman( game ) {
       grid[ p.y ][ p.x ] = 0;
       game.score += 10;
       game.dotsRemaining--;
+    }
+    // Comer power pellet.
+    if ( grid[ p.y ][ p.x ] === 4 ) {
+      grid[ p.y ][ p.x ] = 0;
+      game.score += 50;
+      game.dotsRemaining--;
+      activatePower( game );
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
