@@ -113,9 +113,41 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+// Objetivo de cada fantasma segun su personalidad clasica del arcade.
+function ghostTarget( game, g ) {
+  const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+
+  if ( g.kind === 'blinky' ) {
+    // Agresivo: persecucion directa sobre la celda de Pac-Man.
+    return { x: px, y: py };
+  }
+  if ( g.kind === 'pinky' ) {
+    // Emboscador: 4 celdas delante de la direccion de Pac-Man.
+    const d = DIRS[ p.dir ];
+    return { x: px + d.x * 4, y: py + d.y * 4 };
+  }
+  if ( g.kind === 'inky' ) {
+    // Flanqueador: vector Blinky -> (2 celdas delante de Pac-Man), duplicado.
+    const blinky = game.ghosts.find( ( gh ) => gh.kind === 'blinky' );
+    const d = DIRS[ p.dir ];
+    const ax = px + d.x * 2;
+    const ay = py + d.y * 2;
+    return {
+      x: 2 * ax - Math.round( blinky.x ),
+      y: 2 * ay - Math.round( blinky.y ),
+    };
+  }
+  // Clyde, timido: persigue, pero a <= 8 celdas (Manhattan) se retira
+  // a su esquina inferior izquierda (1, 29).
+  const dist = Math.abs( g.x - px ) + Math.abs( g.y - py );
+  if ( dist <= 8 ) return { x: 1, y: 29 };
+  return { x: px, y: py };
+}
+
 function decideGhost( game, g ) {
   const grid = game.grid;
-  const p = game.pacman;
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
@@ -123,25 +155,20 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+  // Greedy: entre las direcciones sin reversa, la de menor distancia
+  // Manhattan al objetivo propio del kind.
+  const target = ghostTarget( game, g );
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const dist = Math.abs( g.x + d.x - target.x ) + Math.abs( g.y + d.y - target.y );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
   }
+  g.dir = best;
 }
 
 function moveGhost( game, g ) {
