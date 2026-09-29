@@ -147,6 +147,20 @@ function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
 
+  // Aun no liberado: rebote vertical en la pocilga (y entre 13 y 15),
+  // invertiendo direccion en los extremos. La puerta ya bloquea a Pac-Man.
+  if ( !g.released ) {
+    if ( aligned( g.x ) && aligned( g.y ) ) {
+      g.y = Math.round( g.y );
+      if ( g.y <= 13 ) g.dir = 'down';
+      else if ( g.y >= 15 ) g.dir = 'up';
+    }
+    const d = DIRS[ g.dir ];
+    g.x += d.x * g.speed;
+    g.y += d.y * g.speed;
+    return;
+  }
+
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
