@@ -10,8 +10,14 @@ const DIRS = {
 };
 const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
+// Indice de kind para el escalonado de salida tras el poder (Blinky 0 s,
+// Pinky 1 s, Inky 2 s, Clyde 3 s tras el fin del poder).
+const KIND_INDEX = { blinky: 0, pinky: 1, inky: 2, clyde: 3 };
+
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
+const FRIGHTENED_SPEED = 0.05; // 1/20 celda/frame (asustado)
+const EATEN_SPEED = 0.2;        // 1/5 celda/frame (ojos volviendo a la pocilga)
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -21,7 +27,8 @@ function createGame() {
   grid[ PACMAN_START.y ][ PACMAN_START.x ] = 0;
 
   let dots = 0;
-  for ( const row of grid ) for ( const v of row ) if ( v === 2 ) dots++;
+  for ( const row of grid )
+    for ( const v of row ) if ( v === 2 || v === 4 ) dots++;
 
   return {
     state: 'start',
@@ -29,6 +36,12 @@ function createGame() {
     lives: 3,
     frames: 0, // frames desde el arranque/escalonado (60 ≈ 1 s)
     dotsRemaining: dots,
+    power: {
+      active: false,
+      framesLeft: 0, // 480 = 8 s * 60
+      chainIndex: 0, // 0→200, 1→400, 2→800, 3→1600
+      endAtFrames: 0, // frame absoluto de expiracion (para el stagger de salida)
+    },
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -45,6 +58,8 @@ function createGame() {
       kind: g.kind,
       releaseAt: g.releaseAt,
       released: false,
+      mode: 'normal', // 'normal' | 'frightened' | 'eaten' (ojos volviendo a la pocilga)
+      exitAt: g.releaseAt * 60, // frame absoluto de salida inicial (0/3/6/9 s)
     } ) ),
   };
 }
@@ -83,6 +98,18 @@ function wrapTunnel( a, width ) {
   }
 }
 
+// Activa el modo asustado: 8 s, cadena 200..1600. Re-asusta solo a los
+// fantasmas liberados en el mapa; la pocilga y los ojos no se asustan.
+function activatePower( game ) {
+  game.power.active = true;
+  game.power.framesLeft = 480; // 8 s * 60
+  game.power.chainIndex = 0;
+  game.power.endAtFrames = game.frames + game.power.framesLeft;
+  game.ghosts.forEach( ( g ) => {
+    if ( g.released && g.mode === 'normal' ) g.mode = 'frightened';
+  } );
+}
+
 function movePacman( game ) {
   const p = game.pacman;
   const grid = game.grid;
@@ -102,6 +129,13 @@ function movePacman( game ) {
       grid[ p.y ][ p.x ] = 0;
       game.score += 10;
       game.dotsRemaining--;
+    }
+    // Comer power pellet.
+    if ( grid[ p.y ][ p.x ] === 4 ) {
+      grid[ p.y ][ p.x ] = 0;
+      game.score += 50;
+      game.dotsRemaining--;
+      activatePower( game );
     }
     // Si no puede seguir, se detiene en la celda.
     if ( !canMove( grid, p.x, p.y, p.dir, 'pacman' ) ) return;
@@ -155,14 +189,23 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
+  // Asustado: huye de Pac-Man. Greedy sobre la misma lista de opciones sin
+  // reversa, pero MAXIMIZANDO la distancia Manhattan a la celda de Pac-Man.
+  const maximize = g.mode === 'frightened';
+  const target = maximize
+    ? { x: Math.round( game.pacman.x ), y: Math.round( game.pacman.y ) }
+    : ghostTarget( game, g );
+  const sign = maximize ? -1 : 1;
+
   // Greedy: entre las direcciones sin reversa, la de menor distancia
-  // Manhattan al objetivo propio del kind.
-  const target = ghostTarget( game, g );
+  // Manhattan al objetivo propio del kind (negada para maximizar).
   let best = choices[ 0 ];
   let bestDist = Infinity;
   for ( const dir of choices ) {
     const d = DIRS[ dir ];
-    const dist = Math.abs( g.x + d.x - target.x ) + Math.abs( g.y + d.y - target.y );
+    const dist =
+      sign *
+      ( Math.abs( g.x + d.x - target.x ) + Math.abs( g.y + d.y - target.y ) );
     if ( dist < bestDist ) {
       bestDist = dist;
       best = dir;
@@ -171,18 +214,130 @@ function decideGhost( game, g ) {
   g.dir = best;
 }
 
+// Ruta BFS (distancia minima) desde una celda a otra por celdas
+// transitables para fantasma (incluye puerta y pocilga). Especifica de
+// los ojos: SPEC 01 descarto pathfinding para perseguir, pero los ojos
+// necesitan llegada garantizada (el greedy puede ciclar).
+function bfsRoute( grid, fromX, fromY, toX, toY ) {
+  const W = grid[ 0 ].length;
+  const key = ( x, y ) => y * W + x;
+  const prev = new Map();
+  prev.set( key( fromX, fromY ), null );
+  const queue = [ key( fromX, fromY ) ];
+
+  while ( queue.length ) {
+    const cur = queue.shift();
+    const cx = cur % W;
+    const cy = Math.floor( cur / W );
+    if ( cx === toX && cy === toY ) break;
+    for ( const d of Object.values( DIRS ) ) {
+      const nx = cx + d.x;
+      const ny = cy + d.y;
+      if ( isWall( grid, nx, ny, 'ghost' ) ) continue;
+      const k = key( nx, ny );
+      if ( prev.has( k ) ) continue;
+      prev.set( k, cur );
+      queue.push( k );
+    }
+  }
+
+  // Reconstruir destino -> origen, voltear y quitar la celda inicial.
+  const route = [];
+  let cur = key( toX, toY );
+  if ( !prev.has( cur ) ) return route; // inalcanzable (no deberia pasar)
+  while ( cur !== null ) {
+    route.push( { x: cur % W, y: Math.floor( cur / W ) } );
+    cur = prev.get( cur );
+  }
+  route.reverse();
+  route.shift();
+  return route;
+}
+
+// Come un fantasma asustado: cadena 200/400/800/1600 y el fantasma
+// vuelve como ojos (snap a celda entera, velocidad 1/5, ruta BFS
+// hasta la celda de la puerta mas cercana).
+function eatGhost( game, g ) {
+  game.score += 200 * 2 ** game.power.chainIndex;
+  game.power.chainIndex++;
+  g.mode = 'eaten';
+  g.x = Math.round( g.x );
+  g.y = Math.round( g.y );
+  g.speed = EATEN_SPEED;
+  const doorX = g.x <= 13 ? 13 : 14;
+  g.route = bfsRoute( game.grid, g.x, g.y, doorX, 12 );
+  g.routeIndex = 0;
+}
+
+// Ojos volviendo a la pocilga: siguen la ruta BFS hasta la celda de la
+// puerta, bajan hasta la fila de inicio (y 14) y avanzan horizontal
+// hasta su celda de GHOST_STARTS. Al llegar: color y estado de pocilga.
+function moveEaten( game, g ) {
+  if ( aligned( g.x ) && aligned( g.y ) ) {
+    g.x = Math.round( g.x );
+    g.y = Math.round( g.y );
+
+    const start = GHOST_STARTS.find( ( s ) => s.kind === g.kind );
+
+    // Llegada a su celda de inicio: recupera color y estado de pocilga.
+    if ( g.x === start.x && g.y === start.y ) {
+      g.mode = 'normal';
+      g.released = false;
+      g.dir = 'up'; // rebote vertical de la pocilga
+      g.speed = GHOST_SPEED;
+      g.route = null;
+      // Salida escalonada corta tras el fin del poder (o inmediata si el
+      // poder ya expiro): max(llegada, fin del poder + indice del kind * 60).
+      g.exitAt = Math.max(
+        game.frames,
+        game.power.endAtFrames + KIND_INDEX[ g.kind ] * 60
+      );
+      return;
+    }
+
+    let target;
+    if ( g.routeIndex < g.route.length ) {
+      // Fase 1: siguiente celda de la ruta BFS hacia la puerta.
+      const next = g.route[ g.routeIndex ];
+      if ( g.x === next.x && g.y === next.y ) g.routeIndex++;
+      if ( g.routeIndex < g.route.length ) target = g.route[ g.routeIndex ];
+    }
+    if ( !target ) {
+      // Ruta agotada: en la puerta. Bajar a la fila de inicio y luego
+      // ir horizontal hasta su celda (dentro de la pocilga).
+      target = g.y === 14 ? { x: start.x, y: 14 } : { x: g.x, y: 14 };
+    }
+
+    g.dir =
+      target.x < g.x ? 'left' :
+      target.x > g.x ? 'right' :
+      target.y < g.y ? 'up' : 'down';
+  }
+
+  const d = DIRS[ g.dir ];
+  g.x += d.x * g.speed;
+  g.y += d.y * g.speed;
+}
+
 function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
 
+  // Ojos volviendo a la pocilga: logica propia, no dañan ni son comibles.
+  if ( g.mode === 'eaten' ) {
+    moveEaten( game, g );
+    return;
+  }
+
   // Aun no liberado: rebote vertical en la pocilga (y entre 13 y 15),
   // invertiendo direccion en los extremos. La puerta ya bloquea a Pac-Man.
-  // Liberado por temporizador (game.frames >= releaseAt * 60): salida en
-  // dos fases hasta alinear en y 11; la puerta solo existe en x 13-14, asi
-  // que quien esta en x 12/15 primero se corre a la columna de puerta mas
-  // cercana. Recien alineado en y 11 se marca released y decideGhost manda.
+  // Salida cuando game.frames >= exitAt (inicial por releaseAt, o
+  // escalonado tras volver como ojos) en dos fases hasta alinear en y 11;
+  // la puerta solo existe en x 13-14, asi que quien esta en x 12/15
+  // primero se corre a la columna de puerta mas cercana. Recien alineado
+  // en y 11 se marca released y decideGhost manda.
   if ( !g.released ) {
-    if ( game.frames < g.releaseAt * 60 ) {
+    if ( game.frames < g.exitAt ) {
       if ( aligned( g.x ) && aligned( g.y ) ) {
         g.y = Math.round( g.y );
         if ( g.y <= 13 ) g.dir = 'down';
@@ -221,6 +376,9 @@ function moveGhost( game, g ) {
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
+    // Cambio de velocidad solo en celda entera (regla de realineado);
+    // a mitad de celda el fantasma mantiene la velocidad actual.
+    g.speed = g.mode === 'frightened' ? FRIGHTENED_SPEED : GHOST_SPEED;
     decideGhost( game, g );
     if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
   }
@@ -243,6 +401,11 @@ function resetPositions( game ) {
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up'; // direccion inicial del rebote en la pocilga
     g.released = false;
+    g.mode = 'normal'; // tambien los ojos (eaten) y asustados (frightened)
+    g.speed = GHOST_SPEED;
+    g.route = null;
+    g.routeIndex = 0;
+    g.exitAt = GHOST_STARTS[ i ].releaseAt * 60; // re-escalonado 0/3/6/9 s
   } );
 }
 
@@ -252,19 +415,47 @@ function collides( a, b ) {
 
 function update( game ) {
   game.frames++;
+
+  // Cronometro del poder: al llegar a 0, todos los frightened vuelven a
+  // normal. La velocidad 1/10 se recupera recien al realinear en celda entera.
+  // (Antes de los movimientos para que la expiracion coincida con endAtFrames.)
+  if ( game.power.active ) {
+    game.power.framesLeft--;
+    if ( game.power.framesLeft <= 0 ) {
+      game.power.active = false;
+      game.power.framesLeft = 0;
+      game.ghosts.forEach( ( g ) => {
+        if ( g.mode === 'frightened' ) g.mode = 'normal';
+      } );
+    }
+  }
+
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
   for ( const g of game.ghosts ) {
-    if ( collides( game.pacman, g ) ) {
-      game.lives--;
-      if ( game.lives <= 0 ) {
-        game.state = 'lost';
-        return;
-      }
-      resetPositions( game );
-      break;
+    if ( !collides( game.pacman, g ) ) continue;
+    // Ojos: no dañan a Pac-Man ni pueden ser comidos otra vez.
+    if ( g.mode === 'eaten' ) continue;
+    // Asustado: se lo come Pac-Man (cadena 200/400/800/1600).
+    if ( g.mode === 'frightened' ) {
+      eatGhost( game, g );
+      continue;
     }
+    game.lives--;
+    if ( game.lives <= 0 ) {
+      game.state = 'lost';
+      return;
+    }
+  // Muerte durante el poder: se cancela el estado del poder y corre el
+  // re-escalonado de SPEC 01 (resetPositions restaura modo y velocidades).
+  if ( game.power.active ) {
+    game.power.active = false;
+    game.power.framesLeft = 0;
+    game.power.chainIndex = 0;
+  }
+  resetPositions( game );
+  break;
   }
 
   if ( game.dotsRemaining <= 0 ) game.state = 'won';
