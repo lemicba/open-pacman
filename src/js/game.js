@@ -27,6 +27,7 @@ function createGame() {
     state: 'start',
     score: 0,
     lives: 3,
+    frames: 0, // frames desde el arranque/escalonado (60 ≈ 1 s)
     dotsRemaining: dots,
     grid,
     pacman: {
@@ -42,6 +43,8 @@ function createGame() {
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      releaseAt: g.releaseAt,
+      released: false,
     } ) ),
   };
 }
@@ -110,9 +113,41 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+// Objetivo de cada fantasma segun su personalidad clasica del arcade.
+function ghostTarget( game, g ) {
+  const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+
+  if ( g.kind === 'blinky' ) {
+    // Agresivo: persecucion directa sobre la celda de Pac-Man.
+    return { x: px, y: py };
+  }
+  if ( g.kind === 'pinky' ) {
+    // Emboscador: 4 celdas delante de la direccion de Pac-Man.
+    const d = DIRS[ p.dir ];
+    return { x: px + d.x * 4, y: py + d.y * 4 };
+  }
+  if ( g.kind === 'inky' ) {
+    // Flanqueador: vector Blinky -> (2 celdas delante de Pac-Man), duplicado.
+    const blinky = game.ghosts.find( ( gh ) => gh.kind === 'blinky' );
+    const d = DIRS[ p.dir ];
+    const ax = px + d.x * 2;
+    const ay = py + d.y * 2;
+    return {
+      x: 2 * ax - Math.round( blinky.x ),
+      y: 2 * ay - Math.round( blinky.y ),
+    };
+  }
+  // Clyde, timido: persigue, pero a <= 8 celdas (Manhattan) se retira
+  // a su esquina inferior izquierda (1, 29).
+  const dist = Math.abs( g.x - px ) + Math.abs( g.y - py );
+  if ( dist <= 8 ) return { x: 1, y: 29 };
+  return { x: px, y: py };
+}
+
 function decideGhost( game, g ) {
   const grid = game.grid;
-  const p = game.pacman;
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
@@ -120,30 +155,68 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
+  // Greedy: entre las direcciones sin reversa, la de menor distancia
+  // Manhattan al objetivo propio del kind.
+  const target = ghostTarget( game, g );
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const dist = Math.abs( g.x + d.x - target.x ) + Math.abs( g.y + d.y - target.y );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
     }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
   }
+  g.dir = best;
 }
 
 function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
+
+  // Aun no liberado: rebote vertical en la pocilga (y entre 13 y 15),
+  // invertiendo direccion en los extremos. La puerta ya bloquea a Pac-Man.
+  // Liberado por temporizador (game.frames >= releaseAt * 60): salida en
+  // dos fases hasta alinear en y 11; la puerta solo existe en x 13-14, asi
+  // que quien esta en x 12/15 primero se corre a la columna de puerta mas
+  // cercana. Recien alineado en y 11 se marca released y decideGhost manda.
+  if ( !g.released ) {
+    if ( game.frames < g.releaseAt * 60 ) {
+      if ( aligned( g.x ) && aligned( g.y ) ) {
+        g.y = Math.round( g.y );
+        if ( g.y <= 13 ) g.dir = 'down';
+        else if ( g.y >= 15 ) g.dir = 'up';
+      }
+      const d = DIRS[ g.dir ];
+      g.x += d.x * g.speed;
+      g.y += d.y * g.speed;
+      return;
+    }
+    // Fase 1: terminar el rebote hasta alinear en y entera.
+    if ( !aligned( g.y ) ) {
+      const d = DIRS[ g.dir ];
+      g.y += d.y * g.speed;
+      return;
+    }
+    g.y = Math.round( g.y );
+    // Fase 2: horizontal hasta la columna de la puerta (x 13 o 14).
+    const doorX = Math.round( g.x ) <= 13 ? 13 : 14;
+    if ( Math.round( g.x ) !== doorX ) {
+      g.dir = g.x < doorX ? 'right' : 'left';
+      g.x += DIRS[ g.dir ].x * g.speed;
+      return;
+    }
+    g.x = doorX;
+    // Fase 3: subir cruzando la puerta hasta alinear en y 11.
+    if ( g.y > 11 + 1e-3 ) {
+      g.dir = 'up';
+      g.y -= g.speed;
+      return;
+    }
+    g.y = 11;
+    g.released = true; // fuera de la pocilga: sigue el flujo normal
+  }
 
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
@@ -164,10 +237,12 @@ function resetPositions( game ) {
   p.y = PACMAN_START.y;
   p.dir = 'left';
   p.nextDir = null;
+  game.frames = 0; // re-escalonado de la liberacion (0/3/6/9 s)
   game.ghosts.forEach( ( g, i ) => {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
-    g.dir = 'up';
+    g.dir = 'up'; // direccion inicial del rebote en la pocilga
+    g.released = false;
   } );
 }
 
@@ -176,6 +251,7 @@ function collides( a, b ) {
 }
 
 function update( game ) {
+  game.frames++;
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
