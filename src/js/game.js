@@ -10,6 +10,10 @@ const DIRS = {
 };
 const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
+// Indice de kind para el escalonado de salida tras el poder (Blinky 0 s,
+// Pinky 1 s, Inky 2 s, Clyde 3 s tras el fin del poder).
+const KIND_INDEX = { blinky: 0, pinky: 1, inky: 2, clyde: 3 };
+
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
 const FRIGHTENED_SPEED = 0.05; // 1/20 celda/frame (asustado)
@@ -55,7 +59,7 @@ function createGame() {
       releaseAt: g.releaseAt,
       released: false,
       mode: 'normal', // 'normal' | 'frightened' | 'eaten' (ojos volviendo a la pocilga)
-      exitAt: 0, // frame absoluto a partir del cual puede salir de la pocilga
+      exitAt: g.releaseAt * 60, // frame absoluto de salida inicial (0/3/6/9 s)
     } ) ),
   };
 }
@@ -282,6 +286,12 @@ function moveEaten( game, g ) {
       g.dir = 'up'; // rebote vertical de la pocilga
       g.speed = GHOST_SPEED;
       g.route = null;
+      // Salida escalonada corta tras el fin del poder (o inmediata si el
+      // poder ya expiro): max(llegada, fin del poder + indice del kind * 60).
+      g.exitAt = Math.max(
+        game.frames,
+        game.power.endAtFrames + KIND_INDEX[ g.kind ] * 60
+      );
       return;
     }
 
@@ -321,12 +331,13 @@ function moveGhost( game, g ) {
 
   // Aun no liberado: rebote vertical en la pocilga (y entre 13 y 15),
   // invertiendo direccion en los extremos. La puerta ya bloquea a Pac-Man.
-  // Liberado por temporizador (game.frames >= releaseAt * 60): salida en
-  // dos fases hasta alinear en y 11; la puerta solo existe en x 13-14, asi
-  // que quien esta en x 12/15 primero se corre a la columna de puerta mas
-  // cercana. Recien alineado en y 11 se marca released y decideGhost manda.
+  // Salida cuando game.frames >= exitAt (inicial por releaseAt, o
+  // escalonado tras volver como ojos) en dos fases hasta alinear en y 11;
+  // la puerta solo existe en x 13-14, asi que quien esta en x 12/15
+  // primero se corre a la columna de puerta mas cercana. Recien alineado
+  // en y 11 se marca released y decideGhost manda.
   if ( !g.released ) {
-    if ( game.frames < g.releaseAt * 60 ) {
+    if ( game.frames < g.exitAt ) {
       if ( aligned( g.x ) && aligned( g.y ) ) {
         g.y = Math.round( g.y );
         if ( g.y <= 13 ) g.dir = 'down';
@@ -390,6 +401,7 @@ function resetPositions( game ) {
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up'; // direccion inicial del rebote en la pocilga
     g.released = false;
+    g.exitAt = GHOST_STARTS[ i ].releaseAt * 60; // re-escalonado 0/3/6/9 s
   } );
 }
 
