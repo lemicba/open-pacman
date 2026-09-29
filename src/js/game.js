@@ -184,14 +184,23 @@ function decideGhost( game, g ) {
   // Sin salida (callejon): permitir el giro de 180.
   const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
 
+  // Asustado: huye de Pac-Man. Greedy sobre la misma lista de opciones sin
+  // reversa, pero MAXIMIZANDO la distancia Manhattan a la celda de Pac-Man.
+  const maximize = g.mode === 'frightened';
+  const target = maximize
+    ? { x: Math.round( game.pacman.x ), y: Math.round( game.pacman.y ) }
+    : ghostTarget( game, g );
+  const sign = maximize ? -1 : 1;
+
   // Greedy: entre las direcciones sin reversa, la de menor distancia
-  // Manhattan al objetivo propio del kind.
-  const target = ghostTarget( game, g );
+  // Manhattan al objetivo propio del kind (negada para maximizar).
   let best = choices[ 0 ];
   let bestDist = Infinity;
   for ( const dir of choices ) {
     const d = DIRS[ dir ];
-    const dist = Math.abs( g.x + d.x - target.x ) + Math.abs( g.y + d.y - target.y );
+    const dist =
+      sign *
+      ( Math.abs( g.x + d.x - target.x ) + Math.abs( g.y + d.y - target.y ) );
     if ( dist < bestDist ) {
       bestDist = dist;
       best = dir;
