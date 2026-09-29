@@ -83,6 +83,7 @@ Convenciones:
 - **Sí:** personalidades clásicas arcade. Elegido por el usuario; son distintas entre sí y verificables una por una.
 - **Sí:** liberación por temporizador 0/3/6/9 s. Elegido por el usuario; determinista y fácil de verificar a ojo.
 - **Sí:** rebote vertical mientras esperan y re-escalonado tras muerte. Elegidos por el usuario; consistentes con el arranque.
+- **Sí:** salida de la pocilga en dos fases (horizontal hasta la columna de puerta más cercana, luego subir a y 11). Resuelto durante la implementación del paso 4: la puerta solo existe en x 13-14 y los fantasmas en x 12/15 (Blinky, Clyde) tienen pared encima; el «forzar `up`» literal los dejaría congelados o atravesando pared.
 - **Sí:** misma velocidad (1/10) para los 4. AGENTS.md advierte que fracciones arbitrarias rompen el realineado en celdas enteras.
 - **Sí:** reemplazar `hunter`/`random` por los kinds clásicos. Nomenclatura canónica del arcade.
 - **Sí:** distancia Manhattan y elección greedy (sin BFS). Reutiliza la lógica del hunter actual; suficiente para el MVP.

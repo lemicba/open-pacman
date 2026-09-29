@@ -43,6 +43,7 @@ function createGame() {
       dir: 'up',
       speed: GHOST_SPEED,
       kind: g.kind,
+      releaseAt: g.releaseAt,
       released: false,
     } ) ),
   };
@@ -149,16 +150,45 @@ function moveGhost( game, g ) {
 
   // Aun no liberado: rebote vertical en la pocilga (y entre 13 y 15),
   // invertiendo direccion en los extremos. La puerta ya bloquea a Pac-Man.
+  // Liberado por temporizador (game.frames >= releaseAt * 60): salida en
+  // dos fases hasta alinear en y 11; la puerta solo existe en x 13-14, asi
+  // que quien esta en x 12/15 primero se corre a la columna de puerta mas
+  // cercana. Recien alineado en y 11 se marca released y decideGhost manda.
   if ( !g.released ) {
-    if ( aligned( g.x ) && aligned( g.y ) ) {
-      g.y = Math.round( g.y );
-      if ( g.y <= 13 ) g.dir = 'down';
-      else if ( g.y >= 15 ) g.dir = 'up';
+    if ( game.frames < g.releaseAt * 60 ) {
+      if ( aligned( g.x ) && aligned( g.y ) ) {
+        g.y = Math.round( g.y );
+        if ( g.y <= 13 ) g.dir = 'down';
+        else if ( g.y >= 15 ) g.dir = 'up';
+      }
+      const d = DIRS[ g.dir ];
+      g.x += d.x * g.speed;
+      g.y += d.y * g.speed;
+      return;
     }
-    const d = DIRS[ g.dir ];
-    g.x += d.x * g.speed;
-    g.y += d.y * g.speed;
-    return;
+    // Fase 1: terminar el rebote hasta alinear en y entera.
+    if ( !aligned( g.y ) ) {
+      const d = DIRS[ g.dir ];
+      g.y += d.y * g.speed;
+      return;
+    }
+    g.y = Math.round( g.y );
+    // Fase 2: horizontal hasta la columna de la puerta (x 13 o 14).
+    const doorX = Math.round( g.x ) <= 13 ? 13 : 14;
+    if ( Math.round( g.x ) !== doorX ) {
+      g.dir = g.x < doorX ? 'right' : 'left';
+      g.x += DIRS[ g.dir ].x * g.speed;
+      return;
+    }
+    g.x = doorX;
+    // Fase 3: subir cruzando la puerta hasta alinear en y 11.
+    if ( g.y > 11 + 1e-3 ) {
+      g.dir = 'up';
+      g.y -= g.speed;
+      return;
+    }
+    g.y = 11;
+    g.released = true; // fuera de la pocilga: sigue el flujo normal
   }
 
   if ( aligned( g.x ) && aligned( g.y ) ) {
