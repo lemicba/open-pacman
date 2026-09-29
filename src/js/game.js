@@ -12,6 +12,7 @@ const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
+const FRIGHTENED_SPEED = 0.05; // 1/20 celda/frame (asustado)
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -249,6 +250,9 @@ function moveGhost( game, g ) {
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
+    // Cambio de velocidad solo en celda entera (regla de realineado);
+    // a mitad de celda el fantasma mantiene la velocidad actual.
+    g.speed = g.mode === 'frightened' ? FRIGHTENED_SPEED : GHOST_SPEED;
     decideGhost( game, g );
     if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
   }
@@ -280,6 +284,21 @@ function collides( a, b ) {
 
 function update( game ) {
   game.frames++;
+
+  // Cronometro del poder: al llegar a 0, todos los frightened vuelven a
+  // normal. La velocidad 1/10 se recupera recien al realinear en celda entera.
+  // (Antes de los movimientos para que la expiracion coincida con endAtFrames.)
+  if ( game.power.active ) {
+    game.power.framesLeft--;
+    if ( game.power.framesLeft <= 0 ) {
+      game.power.active = false;
+      game.power.framesLeft = 0;
+      game.ghosts.forEach( ( g ) => {
+        if ( g.mode === 'frightened' ) g.mode = 'normal';
+      } );
+    }
+  }
+
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
